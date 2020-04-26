@@ -1,15 +1,20 @@
-library(curatedMetagenomicData)
-library(correlationtree)
-library(tidyverse)
-library(janitor)
-library(cowplot)
-library(evabic)
-library(furrr)
-library(yatah)
-library(glue)
+suppressPackageStartupMessages({
+  library(curatedMetagenomicData)
+  library(correlationtree)
+  library(tidyverse)
+  library(janitor)
+  library(cowplot)
+  library(evabic)
+  library(furrr)
+  library(yatah)
+  library(glue)
+  library(TreeSummarizedExperiment)
+  library(treeclimbR) 
+})
+
 
 options("future.fork.enable" = TRUE)
-plan(multiprocess)
+plan(multiprocess(workers = 8))
 
 
 #### Data ####
@@ -127,6 +132,49 @@ B <- 40 # In the paper, B = 100
 my_TreeFDR <- partial(TreeFDR2, B = B, q.cutoff = 0.5,
                       test.func = test.func.wt, perm.func = perm.func)
 
+treeclimbR <- function(X, Y, tree, fdr = 0.05) {
+  # message(class(X))
+  # Data aggregation
+  samp_info <- data.frame(group = Y)
+  
+  lse <- TreeSummarizedExperiment(assays = list(X),
+                                  rowTree = tree,
+                                  colData = samp_info)
+  nodes <- showNode(tree = tree, only.leaf = FALSE)
+  tse <- aggValue(x = lse, rowLevel = nodes, FUN = sum)
+  
+  
+  ## wilcox.test
+  dY <- colData(tse)$group
+  dX <- assays(tse)[[1]]
+  resW <- test.func.wt(dX,dY)
+  outW <- data.frame(node = rowLinks(tse)$nodeNum,
+                     pvalue = resW$p.value,
+                     sign = resW$e.sign)
+  
+  # run treeclimbR
+  cand <- getCand(tree = tree, score_data = outW,
+                  node_column = "node", p_column = "pvalue",
+                  sign_column = "sign", threshold = 0.05)
+  
+  best <- evalCand(tree = tree, type = "single",
+                   levels = cand$candidate_list,
+                   score_data = outW, node_column = "node",
+                   p_column = "pvalue", sign_column = "sign",
+                   method = "BH", limit_rej = fdr)
+  
+  nodeDiff <- topNodes(object = best, p_value = 0.05, n = Inf)$node
+  
+  if (length(nodeDiff) > 0) {
+    leafDiff <- unlist(findOS(tree = tree, node = nodeDiff, 
+                              only.leaf = TRUE, self.include = TRUE))
+    transNode(tree = tree, node = leafDiff)
+  } else {
+    nodeDiff
+  }
+  
+}
+
 ## Formatting
 
 X <-
@@ -172,8 +220,15 @@ df_simus <-
   mutate(fdrobj_cor = future_pmap(list(X = newdata, Y = samp_lgl, tree = tree_cor), my_TreeFDR),
          fdrobj_randcor = future_pmap(list(X = newdata, Y = samp_lgl, tree = tree_randcor), my_TreeFDR),
          fdrobj_tax = future_pmap(list(X = newdata, Y = samp_lgl), my_TreeFDR, tree = tree_tax),
-         fdrobj_randtax = future_pmap(list(X = newdata, Y = samp_lgl, tree = tree_randtax), my_TreeFDR)) %>% 
+         fdrobj_randtax = future_pmap(list(X = newdata, Y = samp_lgl, tree = tree_randtax), my_TreeFDR),
+         fdrobj_treeclimbR = future_pmap(list(X = newdata, Y = samp_lgl), treeclimbR, tree = tree_tax)) 
+
+saveRDS(df_simus, "simulations/non_parametric/simus_np-df_simus.rds")
+
+df_simus <-
+  df_simus %>% 
   select(-newdata, -ind_samp, -ind_taxa, -samp_lgl, -tree_cor, -tree_randtax, -tree_randcor)
+
 
 # Too big to be committed
 # saveRDS(df_simus, "simulations/non_parametric/simus_np-df_simus.rds")
@@ -190,6 +245,7 @@ df_gathered <-
 df_bh <- 
   df_gathered %>% 
   drop_na(fdr_obj) %>% 
+  filter(method != "treeclimbR") %>%
   group_by(time, ID) %>% 
   sample_n(1) %>% 
   ungroup() %>% 
@@ -203,14 +259,25 @@ df_bh <-
 df_treefdr <- 
   df_gathered %>% 
   drop_na(fdr_obj) %>% 
+  filter(method != "treeclimbR") %>%
   mutate(detected = map(fdr_obj, ~ names(.$p.unadj)[.$p.adj < 0.05])) %>% 
   mutate(k = map_dbl(fdr_obj, "k"), 
          rho = map_dbl(fdr_obj, "rho")) %>% 
   mutate(smoothing_mean = map_dbl(fdr_obj, ~ mean(abs(.$z.adj - .$z.unadj)))) %>% 
   select(fc, nH1, taxa_diffs, method, B, detected, k, rho, smoothing_mean)
 
+# FDR: treeclimbR
+df_treeclimbR <- 
+  df_gathered %>% 
+  filter(method == "treeclimbR") %>%
+  mutate(detected = fdr_obj) %>% 
+  mutate(k = NA, rho = NA, smoothing_mean = NA) %>%
+  select(fc, nH1, taxa_diffs, method, B, detected, 
+         k, rho, smoothing_mean)
+
+
 df_eval <-
-  rbind(df_treefdr, df_bh) %>% 
+  rbind(df_treefdr, df_bh, df_treeclimbR) %>% 
   mutate(pi0 = 100 * (Ntaxa - nH1) / Ntaxa, 
          tidyebc = map2(detected, taxa_diffs, ebc_tidy, m = Ntaxa,
                         measures = c("BACC", "ACC", "TPR", "FDR", "F1"))) %>% 
@@ -279,9 +346,10 @@ df_ebc <-
   df_eval %>% 
   arrange(nH1) %>% 
   mutate(nH1 = as_factor(nH1)) %>% 
-  mutate(method = factor(method, levels = c("bh", "cor", "tax", "randcor", "randtax"), 
+  mutate(method = factor(method, levels = c("bh", "cor", "tax", "randcor", "randtax", "treeclimbR"), 
                          labels = c("BH", "Correlation", "Taxonomy",
-                                    "Random Correlation", "Random Taxonomy")))
+                                    "Random Correlation", "Random Taxonomy", 
+                                    "treeclimbR Taxonomy")))
 
 # TPR
 df_TPR <-
@@ -325,7 +393,7 @@ p_FDR <-
   aes(x = pi0, y = mean, color = method) +
   geom_hline(yintercept = 0.05, color = "red", alpha = 0.6) +
   geom_errorbar(aes(ymin = infbound, ymax = supbound, width = 1)) +
-  geom_line(aes(linetype = method, group = method)) +
+  geom_line(aes(linetype = method, group = method, color = method)) +
   geom_point(show.legend = FALSE) +
   scale_color_manual(values = color_values) +
   scale_linetype_manual(values = linetype_values) +
@@ -340,6 +408,10 @@ plot_grid(
   plot_grid(p_TPR, p_FDR, 
             ncol = 1),
   legend, 
-  ncol = 1, rel_heights = c(2, 0.1))
+  ncol = 1, rel_heights = c(1.8, 0.2))
 
-ggsave("simulations/non_parametric/simu_np-ebc.png", width = 15, height = 8, dpi = "retina")
+#ggsave("simulations/non_parametric/simu_np-ebc.png", width = 8, height = 6, dpi = "retina")
+
+ggsave("simulations/non_parametric/simu_np-ebc.eps", width = 8, height = 6, dpi = 300)
+
+save.image("simulations/non_parametric/simu_np.RData")
