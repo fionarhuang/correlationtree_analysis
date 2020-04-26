@@ -13,7 +13,9 @@ color_values <- c(
   "Taxonomy" = "#F8766D",
   "Random Phylogeny" = "#FFA500",
   "Random Taxonomy" = "#FFA500",
-  "BH" = "#4169E1"
+  "BH" = "#4169E1", 
+  "treeclimbR Taxonomy" = "black",
+  "treeclimbR Phylogeny" = "black"
 )
 
 size_values <- c(
@@ -53,5 +55,7 @@ linetype_values <- c(
   "Random Correlation" = "dashed",
   "Random Taxonomy" = "twodash",
   "Random Phylogeny" = "twodash",
-  "BH" = "dotted"
+  "BH" = "dotted", 
+  "treeclimbR Taxonomy" = "dotted",
+  "treeclimbR Phylogeny" = "dotted"
 )
