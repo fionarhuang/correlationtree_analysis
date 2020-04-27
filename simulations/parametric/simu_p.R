@@ -1,17 +1,18 @@
-library(curatedMetagenomicData)
-library(correlationtree)
-library(StructFDR)
-library(tidyverse)
-library(phyloseq)
-library(janitor)
-library(cowplot)
-library(evabic)
-library(furrr)
-library(yatah)
-library(glue)
-library(TreeSummarizedExperiment)
-library(treeclimbR)
-
+suppressPackageStartupMessages({
+  library(curatedMetagenomicData)
+  library(correlationtree)
+  library(StructFDR)
+  library(tidyverse)
+  library(phyloseq)
+  library(janitor)
+  library(cowplot)
+  library(evabic)
+  library(furrr)
+  library(yatah)
+  library(glue)
+  library(TreeSummarizedExperiment)
+  library(treeclimbR)
+})
 options("future.fork.enable" = TRUE)
 plan(multiprocess(workers = 8))
 
@@ -401,7 +402,7 @@ plot_grid(
   legend, 
   ncol = 1, rel_heights = c(1.8, 0.2))
 
-# ggsave("simulations/parametric/simu_p-ebc_reproduce.png", width = 15, height = 8, dpi = "retina")
-ggsave("simulations/parametric/simu_p-ebc_reproduce.eps", width = 8, height = 6, dpi = 300)
+ggsave("simulations/parametric/simu_p-ebc_reproduce.png", width = 15, height = 8, dpi = "retina")
+ggsave("simulations/parametric/simu_p-ebc.eps", width = 8, height = 6, dpi = 300)
 
-save("simulations/parametric/simu_p.RData")
+save.image("simulations/parametric/simu_p.RData")
