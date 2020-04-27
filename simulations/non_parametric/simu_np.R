@@ -410,7 +410,7 @@ plot_grid(
   legend, 
   ncol = 1, rel_heights = c(1.8, 0.2))
 
-#ggsave("simulations/non_parametric/simu_np-ebc.png", width = 8, height = 6, dpi = "retina")
+ggsave("simulations/non_parametric/simu_np-ebc.png", width = 8, height = 6, dpi = "retina")
 
 ggsave("simulations/non_parametric/simu_np-ebc.eps", width = 8, height = 6, dpi = 300)
 
